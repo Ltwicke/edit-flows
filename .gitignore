@@ -1,0 +1,18 @@
+# Python artifacts
+__pycache__
+
+# Datasets
+/data
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+*.egg-info
+
+# Logging
+/.brezn/
+/wandb/
+/outputs/
+/multirun/
+/checkpoints/
+/csv_logs/

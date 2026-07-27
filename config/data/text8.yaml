@@ -1,0 +1,12 @@
+_target_: editflows.data.text8.Text8DataModule
+
+root: data/text8
+
+name: text8
+
+seq_len: 128
+vocab_size: 1024
+batch_size: 128
+eval_batch_size: 512
+num_workers: 3
+pin_memory: ~

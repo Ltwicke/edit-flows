@@ -1,0 +1,15 @@
+_target_: "lightning.pytorch.loggers.WandbLogger"
+
+id: ~
+entity: ~
+project: ef-${experiment.name}
+group: ~
+name: ${name}
+mode: ~
+resume: allow
+
+# Don't upload any checkpoints to save space
+log_model: no
+
+# Use trainer's default_root_dir
+save_dir: ~

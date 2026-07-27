@@ -1,0 +1,22 @@
+defaults:
+  - model: llama2
+  - noise: eqlen-uniform
+  - coupling: independent
+  - aligner: optimal
+  - path: token-wise
+  - optimizer: adam
+  - lr_scheduler: warmup
+  - ema: ema
+
+_target_: editflows.pretraining.Pretraining
+_recursive_: no
+_convert_: all
+
+vocab_size: ${data.vocab_size}
+
+low_discrepancy_sampling: yes
+
+# While we can compile the forward pass of the evaluation model, the compilation is exceedingly slow
+# because, I believe, the backend generates huge unrolled code and has to recompile for every
+# configuration of sequence lengths, because it wants to give everything static shapes.
+compile: no

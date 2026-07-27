@@ -1,0 +1,4 @@
+# @package _global_
+defaults:
+  - /logging@logging.csv: csv
+  - /logging@logging.wandb: wandb

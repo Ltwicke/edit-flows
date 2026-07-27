@@ -1,0 +1,17 @@
+defaults:
+  - submitit_slurm
+
+gres: gpu:${gpus}
+tasks_per_node: ${gpus}
+
+# submitit only honours cpus_per_gpu when gpus_per_task is set, which we don't
+# use because gres is more flexible.
+cpus_per_task: ${eval:'1 + ${data.num_workers}'}
+mem_gb: ${eval:'32 * ${gpus}'}
+
+timeout_min: ${timeout_min}
+
+# Send USR1, so that lightning takes care of the requeuing instead of submitit (which
+# listens for USR2).
+additional_parameters:
+  signal: USR1@60

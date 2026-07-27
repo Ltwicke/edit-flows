@@ -1,0 +1,42 @@
+defaults:
+  - data: text8
+  - hydra: default
+  - task: pretraining
+  - logging: wandb
+  # Allow the experiment to overwrite the settings below
+  - _self_
+  - experiment: default
+
+gpus: 1
+timeout_min: 1440
+
+seed: 13
+eval_testset: no
+
+name: ~
+
+from_ckpt: ~
+
+hydra:
+  job:
+    name: ${experiment.name}
+
+trainer:
+  accelerator: "auto"
+  devices: "auto"
+  precision: "32"
+
+  # Protect against individual batches with enormous errors
+  gradient_clip_val: 1.0
+
+  # Configure iteration-based training
+  max_steps: 100000
+  val_check_interval: 10000
+  check_val_every_n_epoch: ~
+
+  log_every_n_steps: 10
+  num_sanity_val_steps: 1
+  # We use our own distributed samplers
+  use_distributed_sampler: no
+
+matmul_precision: medium

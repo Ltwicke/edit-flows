@@ -1,0 +1,8 @@
+_target_: editflows.llama.LlamaWithHead
+
+vocab_size: ${data.vocab_size}
+hidden_size: 128
+num_hidden_layers: 2
+num_attention_heads: 8
+max_seq_len: ${data.seq_len}
+max_log_lambda: 10.0

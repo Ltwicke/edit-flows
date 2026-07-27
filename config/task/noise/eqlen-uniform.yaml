@@ -1,0 +1,4 @@
+_target_: editflows.EquiLengthUniformTokenDistribution
+
+vocab_size: ${data.vocab_size}
+seq_len: 100
