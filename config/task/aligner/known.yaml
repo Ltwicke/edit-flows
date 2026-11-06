@@ -1,0 +1,2 @@
+# The alignment of the extended coupling is known (pure deletions), no Needleman-Wunsch search needed
+_target_: editflows.coupling.KnownAligner

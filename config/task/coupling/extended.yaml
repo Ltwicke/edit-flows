@@ -1,0 +1,9 @@
+_target_: editflows.coupling.ExtendedCoupling
+
+# Share of the source sequence that is original, drawn per sequence from U(min, max). With f the draw and n_1
+# the target length, round(n_1 * (1 / f - 1)) random letters are inserted. Equal values give a fixed share.
+original_fraction: [0.4, 0.9]
+
+# Inserted letters are uniform over the alphabet (ids 0 .. n_letters - 1); BOS is never inserted
+n_letters: ${eval:'${data.vocab_size} - 1'}
+bos_token: ${eval:'${data.vocab_size} - 1'}

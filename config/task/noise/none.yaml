@@ -1,0 +1,2 @@
+# The extended coupling derives the source from the target, so no noise distribution is sampled
+_target_: editflows.coupling.NullSource
