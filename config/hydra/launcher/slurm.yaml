@@ -1,6 +1,11 @@
 defaults:
   - submitit_slurm
 
+# Site placeholders, set on the command line or in config/train.yaml:
+#   python train.py -m hydra/launcher=slurm slurm.account=<project> slurm.partition=<gpu partition> ...
+account: ${slurm.account}
+partition: ${slurm.partition}
+
 gres: gpu:${gpus}
 tasks_per_node: ${gpus}
 
@@ -11,7 +16,4 @@ mem_gb: ${eval:'32 * ${gpus}'}
 
 timeout_min: ${timeout_min}
 
-# Send USR1, so that lightning takes care of the requeuing instead of submitit (which
-# listens for USR2).
-additional_parameters:
-  signal: USR1@60
+# No requeue signal: runs resume from their periodic checkpoints when submitted again (docs/CLUSTER.md)
