@@ -1,0 +1,16 @@
+# Sequence encoder + edit-flow head. Swap the real sequence encoder in through the `encoder` node.
+_target_: editflows.edit_head.EncoderWithEditHead
+
+vocab_size: ${data.vocab_size}
+max_log_lambda: 10.0
+
+encoder:
+  # Placeholder: the smallest Llama trunk that still sees context (runs on CPU). The cluster experiments
+  # override the size; the real encoder replaces this node.
+  _target_: editflows.encoder.LlamaEncoder
+  vocab_size: ${data.vocab_size}
+  hidden_size: 32
+  num_hidden_layers: 2
+  num_attention_heads: 2
+  # Upper bound for positions (rotary embeddings); sources can be longer than targets by 1 / original_fraction
+  max_seq_len: 2048
