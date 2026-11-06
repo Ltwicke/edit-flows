@@ -1,0 +1,23 @@
+# The deletion task: Pretraining with the extended coupling, the known alignment and the deletion metrics
+defaults:
+  - pretraining
+  - override model: encoder-head
+  - override noise: none
+  - override coupling: extended
+  - override aligner: known
+  - override optimizer: adamw
+  - override lr_scheduler: cosine
+  - _self_
+
+_target_: editflows.deletion_task.DeletionTask
+
+eval:
+  # Sequences of the validation / test split that are sampled end to end every epoch (per process split)
+  n_sample_seqs: 256
+  # Euler steps of that sampling
+  sample_steps: 100
+  # Bucket edges for the metrics: target length (incl. the right edge) and original fraction n_1 / n_0
+  target_len_bins: [100, 200, 300, 400, 501]
+  fraction_bins: [0.4, 0.55, 0.7, 0.9]
+  # Seed of the couplings used for the sampling evaluation
+  seed: 1234
