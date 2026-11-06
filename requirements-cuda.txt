@@ -1,0 +1,6 @@
+# CUDA environment (Linux cluster nodes with NVIDIA GPUs)
+#   python -m venv <env> && <env>/bin/pip install -r requirements-cuda.txt
+# cu126 covers A100/H100-class GPUs; GPUs that need CUDA >= 12.8 (Blackwell) use the cu128 index instead.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.13.0+cu126
+-e .[dev]

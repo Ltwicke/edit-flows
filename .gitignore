@@ -1,13 +1,13 @@
 # Python artifacts
 __pycache__
-
-# Datasets
-/data
-
-# pixi environments
-.pixi/*
-!.pixi/config.toml
 *.egg-info
+
+# Virtual environments
+/.venv/
+
+# Datasets (incl. the .npz caches written next to the sequence files)
+/data
+*.npz
 
 # Logging
 /.brezn/
@@ -16,3 +16,9 @@ __pycache__
 /multirun/
 /checkpoints/
 /csv_logs/
+
+# Training runs (config, logs, checkpoints, eval tables)
+/runs/
+
+# Notebooks
+.ipynb_checkpoints/

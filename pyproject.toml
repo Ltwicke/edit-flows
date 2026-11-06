@@ -4,29 +4,35 @@ requires = ["hatchling"]
 
 [project]
 name = "editflows"
-version = "0.1.0"
-description = "Edit Flows"
+version = "0.2.0"
+description = "Edit Flows - deletion-only edit flow for the extended coupling of known target sequences"
 authors = [{ name = "Marten Lienen", email = "ml@martenlienen.com" }]
+maintainers = [{ name = "Laurenz Wicke" }]
 license = { text = "MIT" }
+requires-python = ">=3.13"
+# torch is installed separately from the PyTorch index (CPU or CUDA build), see docs/DEPENDENCIES.md
 dependencies = [
   "einops==0.8.2",
   "transformers==5.14.1",
-  "datasets==5.0.0",
   "jaxtyping==0.3.11",
-  "jupyterlab==4.6.2",
   "matplotlib==3.11.1",
-  "wandb==0.28.1",
   "hydra-core==1.3.4",
-  # Version pinned below to git branch that makes SLURM requeuing work reliably
-  "lightning",
+  "lightning==2.6.6",
   "rich==15.0.0",
-  "loky==3.5.6",
+  "submitit==1.5.4",
   "hydra-submitit-launcher==1.2.0",
   "numba==0.66.0",
+  "openpyxl==3.1.5",
+  "pandas==3.0.1",
+  "tqdm==4.67.3",
 ]
 
-[dependency-groups]
-dev = ["ipdb==0.13.13", "pytest"]
+[project.optional-dependencies]
+dev = ["ipdb==0.13.13", "pytest", "ipykernel"]
+wandb = ["wandb==0.28.1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["editflows"]
 
 [tool.ruff]
 line-length = 100
@@ -37,32 +43,3 @@ ignore = ["F821", "F722"]
 
 [tool.ruff.lint.isort]
 known-third-party = ["wandb"]
-
-[tool.pixi.workspace]
-channels = ["conda-forge"]
-platforms = ["linux-64"]
-
-[tool.pixi.pypi-dependencies]
-editflows = { path = ".", editable = true }
-# SLURM auto-requeue signal-handler fix, pending upstream release (see
-# Lightning-AI/pytorch-lightning#21407)
-lightning = { git = "https://github.com/martenlienen/pytorch-lightning.git", branch = "slurm-signals" }
-
-[tool.pixi.feature.cpu.pypi-dependencies]
-torch = { version = "==2.13.0+cpu", index = "https://download.pytorch.org/whl/cpu" }
-
-[tool.pixi.feature.gpu.pypi-dependencies]
-torch = { version = "==2.13.0+cu126", index = "https://download.pytorch.org/whl/cu126" }
-
-[tool.pixi.environments]
-default = { features = ["gpu"] }
-dev = { features = ["gpu", "dev"] }
-cpudev = { features = ["cpu", "dev"] }
-
-[tool.pixi.activation.env]
-# Ensure that pytorch installed from pypi loads libstdc++ from conda.
-LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
-
-[tool.pixi.dependencies]
-python = "==3.13.5"
-sentencepiece = "==0.2.1"
