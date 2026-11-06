@@ -1,0 +1,26 @@
+_target_: editflows.data.sequences.SequenceFileDataModule
+
+name: sequences
+
+# One sequence per row; .xlsx (first sheet, first column), .csv or .txt. See scripts/make_synthetic_targets.py
+path: data/synthetic/targets.xlsx
+sheet: 0
+column: 0
+
+alphabet: ABCDEFGHIJKLMNOPQRST
+# Letters are ids 0..19, BOS is 20
+vocab_size: 21
+# Longest target sequence that is used (longer rows are dropped)
+max_len: 500
+# Longest *target* incl. BOS; sources are longer by 1 / original_fraction
+seq_len: 501
+
+val_fraction: 0.05
+test_fraction: 0.05
+split_seed: 0
+
+batch_size: 32
+eval_batch_size: 64
+# Data workers run the coupling + alignment. Keep 0 on Windows (spawn would pickle the task into every worker)
+num_workers: 0
+pin_memory: ~
