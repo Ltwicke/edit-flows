@@ -34,6 +34,10 @@ class DataBatch:
     # Cache for token positions
     _token_pos: Int[Tensor, "n"] | None = None
 
+    # Optional provenance: index of the token in the sequence this batch was sampled from, -1 for
+    # tokens that were inserted along the way. Carried through `Operations.apply`.
+    origin: Int[Tensor, "n"] | None = None
+
     @property
     def device(self) -> torch.device:
         return self.x.device
@@ -572,7 +576,14 @@ class Operations:
         x = xt_ins[~op_del_ins]
         seq_lens = bincount_known_size(seq_idx_ins[~op_del_ins], x_t.batch_size)
 
-        return DataBatch(seq_lens=tuple(seq_lens.tolist()), x=x)
+        origin = None
+        if x_t.origin is not None:
+            origin_ins = x_t.origin.new_empty(n_pre + n_ins)
+            origin_ins[keep_mask] = x_t.origin
+            origin_ins[ins_mask] = -1
+            origin = origin_ins[~op_del_ins]
+
+        return DataBatch(seq_lens=tuple(seq_lens.tolist()), x=x, origin=origin)
 
 
 class EditFlowModel(Protocol):
