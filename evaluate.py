@@ -33,11 +33,11 @@ def render(datamodule, x_0: CoupledBatch, x_1: DataBatch, x_hat: DataBatch, i: i
     """Three lines per example: the target, the source (inserted letters in lower case) and the verdict per
     source token: `+` correctly deleted, `x` wrongly deleted, `_` insertion that was kept, `.` kept original."""
     lens_0, lens_hat = list(x_0.seq_lens), list(x_hat.seq_lens)
-    src = torch.split(x_0.x, lens_0)[i][1:]
-    ins = torch.split(x_0.inserted, lens_0)[i][1:]
-    tgt = x_1.split_sequences()[i][1:]
+    src = torch.split(x_0.x.cpu(), lens_0)[i][1:]
+    ins = torch.split(x_0.inserted.cpu(), lens_0)[i][1:]
+    tgt = x_1.split_sequences()[i][1:].cpu()
     offset = sum(lens_0[:i]) + 1
-    origin = torch.split(x_hat.origin, lens_hat)[i]
+    origin = torch.split(x_hat.origin.cpu(), lens_hat)[i]
     kept = torch.zeros(len(src), dtype=torch.bool)
     kept[origin[origin >= offset] - offset] = True
     n_ins_events = int((origin < 0).sum())
