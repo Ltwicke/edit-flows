@@ -1,0 +1,35 @@
+# @package _global_
+
+# Learnability check on a CPU laptop (roughly 30-45 minutes): a small encoder, ~10k sequences per epoch,
+# four epochs. The walkthrough notebook reads this run.
+#   python train.py experiment=deletion-local
+
+name: local
+experiment:
+  name: deletion-local
+
+data:
+  batch_size: 32
+  eval_batch_size: 64
+  num_workers: 0
+
+task:
+  model:
+    encoder:
+      hidden_size: 64
+      num_hidden_layers: 2
+      num_attention_heads: 4
+  eval:
+    n_sample_seqs: 128
+    sample_steps: 100
+  optimizer:
+    lr: 1e-3
+  lr_scheduler:
+    warmup_steps: 100
+
+trainer:
+  accelerator: cpu
+  devices: 1
+  max_epochs: 4
+  limit_train_batches: 300
+  limit_val_batches: 8

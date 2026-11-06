@@ -34,6 +34,9 @@ wandb = ["wandb==0.28.1"]
 [tool.hatch.build.targets.wheel]
 packages = ["editflows"]
 
+[tool.pytest.ini_options]
+markers = ["slow: end-to-end tests that train for a minute (deselect with -m 'not slow')"]
+
 [tool.ruff]
 line-length = 100
 

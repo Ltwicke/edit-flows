@@ -1,8 +1,8 @@
 defaults:
-  - data: text8
+  - data: sequences
   - hydra: default
-  - task: pretraining
-  - logging: wandb
+  - task: deletion
+  - logging: csv
   # Allow the experiment to overwrite the settings below
   - _self_
   - experiment: default
@@ -13,13 +13,33 @@ timeout_min: 1440
 seed: 13
 eval_testset: no
 
-name: ~
+# Every run has a name; everything it writes goes to its run directory
+name: ???
+run_dir: runs/${name}
 
+# Checkpoint to start from. By default a run continues from the newest checkpoint in its own run
+# directory (pass from_ckpt=none to force a fresh start).
 from_ckpt: ~
+
+checkpoint:
+  monitor: val/del_f1
+  mode: max
+  # periodic.ckpt is written this often (minutes of training), for jobs that a time limit may kill
+  time_interval_min: 30
+
+# Placeholders for the submitit launcher (hydra/launcher=slurm)
+slurm:
+  account: ~
+  partition: ~
 
 hydra:
   job:
     name: ${experiment.name}
+  run:
+    dir: ${run_dir}/hydra
+  sweep:
+    dir: ${run_dir}/hydra
+    subdir: ${hydra.job.num}
 
 trainer:
   accelerator: "auto"
@@ -29,10 +49,11 @@ trainer:
   # Protect against individual batches with enormous errors
   gradient_clip_val: 1.0
 
-  # Configure iteration-based training
-  max_steps: 100000
-  val_check_interval: 10000
-  check_val_every_n_epoch: ~
+  # Epoch-based training: the deletion metrics are computed after every epoch. max_steps stays
+  # unlimited (-1); schedules that need the number of steps get lightning's estimate from the task.
+  max_epochs: 30
+  max_steps: -1
+  check_val_every_n_epoch: 1
 
   log_every_n_steps: 10
   num_sanity_val_steps: 1

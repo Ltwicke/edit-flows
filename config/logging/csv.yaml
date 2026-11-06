@@ -1,6 +1,8 @@
 _target_: "lightning.pytorch.loggers.CSVLogger"
 
-save_dir: csv_logs
-name: ${experiment.name}
+# runs/<name>/logs/version_<N>/metrics.csv; a new version for every (re)start of the run, because the
+# CSV logger overwrites the metrics file of an existing version
+save_dir: ${run_dir}
+name: logs
 version: ~
 flush_logs_every_n_steps: 10

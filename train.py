@@ -6,13 +6,18 @@ import os
 import socket
 import warnings
 
+import sys
+from datetime import timedelta
+from pathlib import Path
+
 import hydra
 import torch
-import wandb
 from hydra.utils import instantiate
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.plugins.environments import SLURMEnvironment
+from lightning.pytorch.utilities.rank_zero import rank_zero_only
 from omegaconf import DictConfig, OmegaConf, open_dict
 from submitit import JobEnvironment
 
@@ -101,17 +106,39 @@ def restore_resumed_wandb_run_id(config: DictConfig) -> bool:
     return True
 
 
+def resume_path(config: DictConfig, ckpt_dir: Path) -> str | None:
+    """An explicit `from_ckpt` wins (`none` forces a fresh start); otherwise a run continues from the
+    newest checkpoint in its own run directory."""
+
+    if config.from_ckpt is not None:
+        return None if str(config.from_ckpt).lower() == "none" else str(config.from_ckpt)
+    candidates = [p for p in (ckpt_dir / "last.ckpt", ckpt_dir / "periodic.ckpt") if p.is_file()]
+    if not candidates:
+        return None
+    return str(max(candidates, key=lambda p: p.stat().st_mtime))
+
+
 def get_callbacks(config, ckpt_dir):
-    monitor = {"monitor": "val/loss", "mode": "min"}
+    monitor = {"monitor": config.checkpoint.monitor, "mode": config.checkpoint.mode}
     callbacks = [
+        # Best model by the monitored metric plus last.ckpt, written after every validation epoch
         ModelCheckpoint(
             dirpath=ckpt_dir,
             save_last=True,
             save_top_k=1,
             every_n_epochs=1,
+            filename="best-{epoch}-{step}",
             **monitor,
         ),
-        TQDMProgressBar(refresh_rate=1),
+        # periodic.ckpt every few minutes of training, so that a job killed by a time limit loses little
+        ModelCheckpoint(
+            dirpath=ckpt_dir,
+            train_time_interval=timedelta(minutes=config.checkpoint.time_interval_min),
+            save_top_k=1,
+            filename="periodic",
+            enable_version_counter=False,
+        ),
+        TQDMProgressBar(refresh_rate=1 if sys.stdout.isatty() else 50),
         LearningRateMonitor(),
         ConfigInCheckpoint(config),
         TokenizerInCheckpoint(),
@@ -130,12 +157,22 @@ def main(config: DictConfig):
     store_job_info(config)
 
     # Log to same W&B ID if this is a requeued run after a timeout
-    resumed = restore_resumed_wandb_run_id(config)
+    restore_resumed_wandb_run_id(config)
 
     # Resolve interpolations to work around a bug:
     # https://github.com/omry/omegaconf/issues/862
     OmegaConf.resolve(config)
     print_config(config)
+
+    # Everything a run writes goes to its run directory
+    run_dir = Path(config.run_dir)
+    ckpt_dir = run_dir / "checkpoints"
+    if rank_zero_only.rank == 0:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        OmegaConf.save(config, run_dir / "config.yaml")
+        handler = logging.FileHandler(run_dir / "train.log", encoding="utf-8")
+        handler.setFormatter(logging.Formatter("[%(asctime)s][%(name)s][%(levelname)s] %(message)s"))
+        logging.getLogger().addHandler(handler)
 
     if "_target_" in config.logging:
         loggers = [instantiate(config.logging)]
@@ -152,9 +189,6 @@ def main(config: DictConfig):
     if wandb_logger is not None and wandb_logger.version is not None:
         store_wandb_run_id(wandb_logger.version)
 
-    primary_logger = wandb_logger if wandb_logger is not None else loggers[0]
-    ckpt_dir = f"checkpoints/{primary_logger.name}/{primary_logger.version}"
-
     torch.set_float32_matmul_precision(config.matmul_precision)
 
     log.info("Loading data")
@@ -167,26 +201,31 @@ def main(config: DictConfig):
 
     log.info("Instantiating trainer")
     callbacks = get_callbacks(config, ckpt_dir)
+    # Under SLURM, lightning's auto-requeue would write a checkpoint from inside a signal handler. Jobs
+    # are resumed from the periodic checkpoints by resubmitting them instead.
+    plugins = [SLURMEnvironment(auto_requeue=False)] if SLURMEnvironment.detect() else []
     trainer = Trainer(
         **config.trainer,
         callbacks=callbacks,
         logger=loggers,
-        default_root_dir=ckpt_dir,
+        default_root_dir=str(run_dir),
+        plugins=plugins,
     )
 
     log.info("Starting training!")
-    fit_kwargs = {}
-    if resumed:
-        fit_kwargs["ckpt_path"] = "hpc"
-    elif config.from_ckpt is not None:
-        fit_kwargs["ckpt_path"] = config.from_ckpt
-    trainer.fit(task, datamodule=datamodule, **fit_kwargs)
+    ckpt_path = resume_path(config, ckpt_dir)
+    if ckpt_path is not None:
+        log.info(f"Resuming from {ckpt_path}")
+    trainer.fit(task, datamodule=datamodule, ckpt_path=ckpt_path)
 
     if config.eval_testset:
         log.info("Starting testing!")
         trainer.test(ckpt_path="best", datamodule=datamodule)
 
-    wandb.finish()
+    if wandb_logger is not None:
+        import wandb
+
+        wandb.finish()
 
     checkpoint = trainer.checkpoint_callback
     assert isinstance(checkpoint, ModelCheckpoint)

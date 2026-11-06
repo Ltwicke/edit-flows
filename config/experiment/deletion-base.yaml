@@ -1,0 +1,35 @@
+# @package _global_
+
+# Reference configuration for GPU training on the full sequence file (~5M parameter encoder, bf16).
+#   python train.py experiment=deletion-base name=<run name> gpus=<number of GPUs>
+
+experiment:
+  name: deletion-base
+
+gpus: 1
+
+data:
+  batch_size: 128
+  eval_batch_size: 256
+  num_workers: 7
+
+task:
+  model:
+    encoder:
+      hidden_size: 256
+      num_hidden_layers: 6
+      num_attention_heads: 8
+  eval:
+    n_sample_seqs: 512
+    sample_steps: 100
+  optimizer:
+    lr: 3e-4
+    betas: [0.9, 0.95]
+  lr_scheduler:
+    warmup_steps: 1000
+
+trainer:
+  precision: bf16-mixed
+  devices: ${gpus}
+  max_epochs: 30
+  log_every_n_steps: 50

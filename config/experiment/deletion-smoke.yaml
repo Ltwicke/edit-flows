@@ -1,0 +1,30 @@
+# @package _global_
+
+# Pipeline smoke test on a CPU: the default tiny model, 40 batches per epoch, two epochs (about a minute).
+#   python train.py experiment=deletion-smoke
+
+name: smoke
+experiment:
+  name: deletion-smoke
+
+data:
+  batch_size: 16
+  eval_batch_size: 32
+  num_workers: 0
+
+task:
+  eval:
+    n_sample_seqs: 32
+    sample_steps: 20
+  optimizer:
+    lr: 1e-3
+  lr_scheduler:
+    warmup_steps: 20
+
+trainer:
+  accelerator: cpu
+  devices: 1
+  max_epochs: 2
+  limit_train_batches: 40
+  limit_val_batches: 4
+  log_every_n_steps: 5
