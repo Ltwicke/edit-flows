@@ -253,6 +253,21 @@ That error means pip found an **explicit** proxy — from `https_proxy` in the e
 transparently at the packet level and needs no environment variables at all. Setting them routes pip
 through a different, restrictive proxy instead.
 
+**Measured on `hugefacet`, 2026-11-21: PyPI is blocked at the network and this cannot be fixed from a
+user account.** The evidence, for anyone tempted to re-diagnose it:
+
+| observation | conclusion |
+|---|---|
+| `curl https://pypi.org/simple/` -> `000`, `https://github.com` -> `200` | not a pip or Python problem; egress works for allowlisted hosts |
+| TCP to `pypi.org:443` opens, then `unexpected eof while reading` on the ClientHello | a transparent redirect (redsocks) accepts the connection locally, fails upstream, and closes |
+| identical failure with *and* without SNI | not SNI-based filtering; the decision is made on the destination address, before TLS |
+| `OpenSSL 3.5.5` on the node | not an old TLS stack |
+| with `https_proxy` set, the same request gives `403 Forbidden` | the same upstream allowlist, just a readable error instead of a silent close |
+
+`files.pythonhosted.org` and `download.pytorch.org` are blocked the same way. Note that GitHub release
+assets redirect to `objects.githubusercontent.com`, so test that host before relying on the uv or
+offline-bundle fallbacks below. The request to the admins is in the paragraph after the next.
+
 **This is not a permissions problem.** The site documentation does not forbid installing Python
 packages, it encourages it. `python.html` says "we encourage you to setup your own Python environment"
 (because "it is impossible to preinstall all Python packages that the users may need") and recommends
