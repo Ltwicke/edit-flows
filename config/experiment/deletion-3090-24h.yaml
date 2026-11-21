@@ -1,0 +1,28 @@
+# @package _global_
+
+# Long GPU run on one RTX 3090 (24 GB): the deletion-base encoder, 25 000 training sequences per epoch,
+# 300 epochs. max_epochs defines the experiment and the cosine horizon; the wall clock only decides how
+# far one job gets, and the run continues from its newest checkpoint when it is submitted again.
+#   sbatch scripts/train.sbatch <run name>                        # up to 24 h
+#   sbatch scripts/train.sbatch <run name> trainer.max_epochs=8   # the same setup, roughly 30 minutes
+#   scripts/submit_chain.sh 3 <run name>                          # three dependent jobs, one run
+
+defaults:
+  - deletion-base
+  - _self_
+
+experiment:
+  name: deletion-3090-24h
+
+data:
+  path: data/synthetic/targets-60k.txt
+
+trainer:
+  # One epoch := 25 000 training sequences, whatever the batch size (128 -> 195 batches = 24 960). The
+  # sequence pool is much larger and the shuffling sampler draws a different subset every epoch, so
+  # epochs are comparable without being identical.
+  limit_train_batches: ${eval:'25000 // ${data.batch_size}'}
+  max_epochs: 300
+  # No max_time on purpose: lightning checkpoints the Timer state and restores it cumulatively, so a
+  # resumed or chained job would stop almost immediately. The SLURM time limit plus
+  # checkpoints/periodic.ckpt bound the job instead.
