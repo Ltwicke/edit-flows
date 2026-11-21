@@ -5,8 +5,8 @@ there because the CPU and CUDA builds come from different package indexes; the t
 
 | component | version | why / notes |
 |---|---|---|
-| Python | 3.13 (tested with 3.13.17) | upstream pins 3.13.5; every dependency has wheels for it on Windows and Linux |
-| torch | 2.13.0 (`+cpu` locally, `+cu126` on GPU nodes) | same version on both sides; cu126 covers A100/H100-class GPUs, use the cu128 index for GPUs that need CUDA >= 12.8 |
+| Python | 3.13 (tested with 3.13.17) | upstream pins 3.13.5; every dependency has wheels for it on Windows and Linux. The hard floor from the dependencies themselves is 3.11 (`jaxtyping`), which matters only on a machine where 3.13 cannot be installed |
+| torch | 2.13.0 (`+cpu` locally, `+cu126` on GPU nodes) | same version on both sides; cu126 covers A100/H100-class GPUs (and Ampere consumer cards such as the RTX 3090), use the cu128 index for GPUs that need CUDA >= 12.8. The wheels bundle their own CUDA runtime as `nvidia-*-cu12` packages and never use a system CUDA toolkit, so the `nvcc` version on a node is irrelevant - but the **driver** must be >= 525.60.13 for any CUDA 12.x build |
 | transformers | 5.14.1 | the Llama trunk used by the placeholder encoder (`editflows/llama.py`, `editflows/encoder.py`) |
 | lightning | 2.6.6 (PyPI) | training loop, DDP, checkpoints. Upstream used a patched git branch for SLURM auto-requeue; this fork disables auto-requeue instead (see `docs/CLUSTER.md`) |
 | hydra-core, hydra-submitit-launcher, submitit | 1.3.4, 1.2.0, 1.5.4 | configuration and optional SLURM launcher |
@@ -45,6 +45,57 @@ pip install -r requirements-cuda.txt
 
 Do not use `pip install --user` on shared systems (packages leak into every environment). Build the environment on a
 login node with internet access; compute nodes often have none.
+
+Check the driver before installing, because it decides whether the pinned wheel can load at all:
+
+```bash
+nvidia-smi --query-gpu=name,driver_version,compute_cap --format=csv
+```
+
+| driver | action |
+|---|---|
+| >= 525.60.13 | `requirements-cuda.txt` as written (`torch==2.13.0+cu126`) |
+| 455 - 525 | CUDA 12.x wheels will not load, and torch 2.13 ships no cu118 build. Pin back to the newest torch with both a cu118 and a cp313 wheel; the other pins only ask for `torch>=2.4` (`transformers`) and `torch>=2.1,<4.0` (`lightning`), so nothing else has to move. Verify with the test suite before using it on the cluster |
+| < 455 | too old for an Ampere card; a driver update is an administrator's job |
+
+Then verify, in this order - the bf16 matmul is the real gate, since `bf16-mixed` is the precision the GPU
+experiments use:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+python -c "import torch; print(torch.cuda.get_device_name(0), torch.cuda.is_bf16_supported())"
+python -c "import torch; a=torch.randn(4096,4096,device='cuda',dtype=torch.bfloat16); print((a@a).float().sum().item())"
+python -m pytest -q tests -m "not slow"
+```
+
+### Clusters without a module system
+
+Where there is no `module load` and the system Python is older than 3.13, use [uv](https://docs.astral.sh/uv/): it
+downloads a prebuilt standalone CPython, so nothing is compiled and no system headers are needed. Install uv from
+PyPI rather than with `curl | sh` - a proxied cluster often reaches PyPI while `astral.sh` is blocked.
+
+```bash
+python3 -m venv ~/0envs/bootstrap                  # a throwaway env that only holds uv
+~/0envs/bootstrap/bin/pip install -U pip uv
+export PATH="$HOME/0envs/bootstrap/bin:$PATH"
+
+uv python install 3.13                             # prebuilt, no compilation
+uv venv --python 3.13 ~/0envs/EditFlows_env
+uv pip install --python ~/0envs/EditFlows_env -r requirements-cuda.txt
+~/0envs/EditFlows_env/bin/python -c "import ssl; print(ssl.OPENSSL_VERSION)"
+```
+
+Miniforge is an equivalent fallback (also no compilation). `pyenv` is the last resort: it builds CPython from source
+and needs `libssl-dev`, `libffi-dev`, `zlib1g-dev`, `libbz2-dev`, `libsqlite3-dev`, `libreadline-dev` and
+`liblzma-dev`, which cannot be installed without root - and a build with a missing `_ssl` yields a Python that
+cannot reach PyPI at all, which only becomes apparent after the compile. Verify any such build immediately with
+`python -c "import ssl, lzma, sqlite3, ctypes"`.
+
+Keep the environment **outside** the clone, so `git pull`, `git switch` and `git clean` can never touch it. Because
+`requirements-cuda.txt` installs the project with `-e .[dev]`, the clone is the installed package: code changes need
+only `git pull`, and reinstalling is for dependency changes.
+
+`docs/CLUSTER.md` has the full worked example for the UiO CCSE cluster.
 
 ## Exact reproduction
 
