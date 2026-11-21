@@ -253,6 +253,22 @@ That error means pip found an **explicit** proxy — from `https_proxy` in the e
 transparently at the packet level and needs no environment variables at all. Setting them routes pip
 through a different, restrictive proxy instead.
 
+**This is not a permissions problem.** The site documentation does not forbid installing Python
+packages, it encourages it. `python.html` says "we encourage you to setup your own Python environment"
+(because "it is impossible to preinstall all Python packages that the users may need") and recommends
+`pyenv`; it then shows `python3 -m venv env` and a bare `pip install numpy`. Self-installation into
+`$HOME` is the norm site-wide: the LAMMPS page says "we encourage you to build LAMMPS on your own" with
+`git clone` and `make`, and the Julia page installs packages into `~/Julia`. The "contact Henrik or
+Even" line on `software.html` is about *system-wide* software (the compilers, LAMMPS, `nvcc`), not about
+packages in your own environment, and sudo is never mentioned anywhere on the site. Only Anaconda and
+Poetry are "not installed yet, but can be set up on request".
+
+Nor is there a preinstalled stack to fall back on. The only Python packages named anywhere on the site
+are `numpy`, `scipy` and `matplotlib`, on the system Python 3.8.10; PyTorch, TensorFlow, JAX and cuDNN
+are never mentioned, and there is no module system, `/opt`, `/share`, shared conda, Spack or Apptainer.
+It would not help in any case: this project needs Python >= 3.11 at the very least, so a 3.8
+interpreter's packages are unusable and a private environment is unavoidable.
+
 Work through this in order and stop at the first that returns `200`:
 
 ```bash
@@ -287,10 +303,13 @@ printf '\nunset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROX
 different places, so one can be routed through the broken proxy while the other is not.
 
 **If PyPI is unreachable either way**, pip needs `pypi.org` *and* `files.pythonhosted.org`, and torch
-additionally needs `download.pytorch.org`. Ask the CCSE admins (Henrik Andersen Sveinsson,
-h.a.sveinsson@fys.uio.no) to allow those three, or for the address of a local mirror — a cluster whose
-users cannot install Python packages is broken, and the site docs do claim https works. Two things make
-that wait less painful:
+additionally needs `download.pytorch.org`. Report it as a broken proxy path rather than as a request
+for permission: the docs state the cluster "provides permissions for `http`, `https` and `ssh`" through
+redsocks, and a working `git clone` over https proves egress does work. Ask the CCSE admins (Henrik
+Andersen Sveinsson, h.a.sveinsson@fys.uio.no, or Even Nordhagen) whether the proxy variables should be
+unset for redsocks, whether those three hosts can be allowed, or whether a local mirror exists. Since
+Anaconda is explicitly "set up on request", asking for a system-wide Miniforge is a request the docs
+already anticipate. Two things make the wait less painful:
 
 * `uv` itself, and the standalone CPython it installs, come from **GitHub releases**, not PyPI. If
   github.com is reachable, A.6 works even while PyPI is blocked — you just cannot install the
@@ -301,6 +320,15 @@ that wait less painful:
   `pip download -r requirements-cuda.txt -d wheels --only-binary=:all: --platform manylinux_2_28_x86_64 --python-version 3.13`,
   attach `wheels/` to a release on your own repo, then on the cluster `curl -LO` each and
   `pip install --no-index --find-links wheels -r requirements-cuda.txt`. It is roughly 4 GB.
+
+Worth confirming on the node rather than trusting documentation whose footer says 2022:
+
+```bash
+python3 -V; python3 -m pip list 2>/dev/null | head -30
+python3 -c "import torch; print(torch.__version__)" 2>&1 | tail -1
+command -v module conda mamba apptainer singularity spack
+ls -d /opt/* /share/* /software/* /cluster/* 2>/dev/null | head
+```
 
 ## A.6 Python 3.13 and the environment
 
