@@ -98,8 +98,9 @@ second start stops immediately. The cosine horizon comes from `estimated_steppin
 `max_epochs x limit_train_batches`.
 
 **Epoch convention.** With no real dataset yet, one epoch is *defined* as 25 000 synthetic training
-sequences, expressed as `limit_train_batches: ${eval:'25000 // ${data.batch_size}'}` so it survives a
-change of batch size.
+sequences, expressed as `limit_train_batches: ${eval:'25000 // (${data.batch_size} * ${gpus})'}` so it
+survives a change of batch size *or* GPU count. The world size belongs in the divisor because
+`limit_train_batches` is counted per process and the `DistributedSampler` shards the split per rank.
 
 **Dependencies.** `torch` is intentionally absent from `pyproject.toml`, because the CPU and CUDA builds
 come from different indexes; `requirements-cpu.txt` and `requirements-cuda.txt` pick one. See
@@ -110,6 +111,12 @@ come from different indexes; `requirements-cpu.txt` and `requirements-cuda.txt` 
 
 **Fast gate.** `python -m pytest -q tests -m "not slow"` (~10 s, CPU). The slow marker is a subprocess
 end-to-end train/evaluate test.
+
+**Launchers.** The UiO CCSE cluster this is used on has **no batch scheduler** - no `sbatch`,
+`squeue` or `sinfo`. Runs start with `scripts/train_detached.sh`, which checks the GPUs are free (there
+is no admission control), sets `CUDA_VISIBLE_DEVICES`, and detaches under `setsid nohup`.
+`scripts/train.sbatch` and `scripts/submit_chain.sh` are kept for SLURM sites and are unused there.
+`neuroai` has no working NVIDIA driver; `hugefacet` (4x A100-40GB) is the target.
 
 **Branches.** `on-GPU-cluster-branch` holds the CUDA-enabled cluster work. `docs/CLUSTER.md` is the
 submission guide, with the concrete UiO CCSE runbook in its appendix; `notebooks/` holds the method

@@ -1,0 +1,36 @@
+# @package _global_
+
+# GPU plumbing check: the deletion-base encoder and bf16-mixed, but only 512 training sequences over two
+# epochs (a couple of minutes). Proves the environment, the GPU, bf16, the deletion metrics and the run
+# directory before a long job starts. Deliberately NOT the 25k-sequence epoch of deletion-gpu-24h.
+# Single GPU on purpose: a plumbing check should not also be the first test of DDP.
+#   EDITFLOW_EXPERIMENT=deletion-gpu-check scripts/train_detached.sh gpu-check     # no scheduler
+#   EDITFLOW_EXPERIMENT=deletion-gpu-check sbatch scripts/train.sbatch gpu-check   # with SLURM
+
+defaults:
+  - deletion-base
+  - _self_
+
+name: gpu-check
+experiment:
+  name: deletion-gpu-check
+
+gpus: 1
+
+data:
+  path: data/synthetic/targets-60k.txt
+  batch_size: 64
+  eval_batch_size: 64
+
+task:
+  eval:
+    n_sample_seqs: 32
+    sample_steps: 20
+  lr_scheduler:
+    warmup_steps: 5
+
+trainer:
+  max_epochs: 2
+  limit_train_batches: 8
+  limit_val_batches: 2
+  log_every_n_steps: 1

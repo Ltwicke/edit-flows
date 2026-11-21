@@ -36,7 +36,8 @@ sbatch scripts/train.sbatch <run name> data.path=<file> trainer.max_epochs=50   
 ```
 
 Fill in `--partition`, the environment path and, only where the site uses SLURM accounting,
-`--account` in `scripts/train.sbatch` first (already filled in for Egil, see the appendix).
+`--account` in `scripts/train.sbatch` first. The cluster this fork is used on has **no scheduler at
+all** - see the appendix for `scripts/train_detached.sh`, which replaces this script there.
 One process per GPU (`--ntasks-per-node` = `--gpus`); the script passes `gpus=N`, which sets
 `trainer.devices`, and `data.num_workers = cpus-per-task - 1`. Lightning uses DDP automatically.
 
@@ -122,32 +123,37 @@ branch. This is the only way to get results off a cluster that forbids `scp` and
 
 ---
 
-# Appendix: the UiO CCSE "Egil" cluster (`neuroai`)
+# Appendix: the UiO CCSE "Egil" cluster
 
 Everything above is site-neutral. This appendix is the concrete runbook for the cluster at
-<https://uio-ccse.github.io/kvv-tungregning/>, where the GPU nodes are
+<https://uio-ccse.github.io/kvv-tungregning/>.
 
-| node | GPUs | note |
+| node | GPUs | state (checked 2026-11-21) |
 |---|---|---|
-| `neuroai` | 1x RTX 3090 (24 GB) | the target of `scripts/train.sbatch`; also runs JupyterHub |
-| `egil-analyze` | 1x RTX 3090 | **serves the NFS home**; runs JupyterHub |
-| `hugefacet` / `greatfacet` | 4x / 6x A100-40GB | the docs say long jobs belong here |
-| `bigfacet` | 8x P100-16GB | older; no bf16 |
-| `bioai` | 2x RTX 2080 | runs JupyterHub |
+| **`hugefacet`** | 4x A100-PCIE-40GB | **the target.** Driver new enough for CUDA 12, and idle |
+| `greatfacet` | 6x A100-PCIE-40GB | equivalent; the obvious second choice |
+| `neuroai` | 1x RTX 3090 | **unusable — no working NVIDIA driver** |
+| `bioai` | 2x RTX 2080 | too small |
+| `bigfacet` | 8x P100-16GB | Pascal: no bf16, would need `precision: 16-mixed` or `32` |
+| `egil-analyze` | 1x RTX 3090 | serves the NFS home; also runs JupyterHub |
 
-Two facts shape the whole setup:
+Three facts shape the whole setup, and none of them is in the site documentation:
 
+* **There is no batch scheduler.** `sbatch`, `squeue`, `sinfo` and `scontrol` do not exist on this
+  cluster, despite what the site docs imply. Runs are started directly on a node with
+  `scripts/train_detached.sh`; `scripts/train.sbatch` and `scripts/submit_chain.sh` are for SLURM sites
+  and are not used here. **There is therefore no admission control** — check the GPUs are free before
+  starting, because nothing else will.
 * **`$HOME` is one NFS filesystem**, created on `egil-analyze` and mounted on every node with the same
-  UID. One clone and one environment serve every node — there is nothing to install per node. The home
-  is shared by all users with no quota, and a full filesystem stops every job on the cluster, so keep
-  large files out of it.
+  UID. One clone and one environment serve every node. The home is shared by all users with no quota,
+  and filling it stops everyone's work.
 * **`lab-login.uio.no` forbids `ssh -J`, `ProxyJump`, `ProxyCommand` and `ssh -L`.** So `scp` and
   `rsync` from your laptop do not work at all, and the Jupyter port-forward the site documents cannot
   be assumed to work from off site. Both are designed around below.
 
 ## A.1 Logging in
 
-Three hops; the last one uses your **cluster** password, not your UiO password.
+Three hops; the last uses your **cluster** password, not your UiO password.
 
 ```bash
 ssh <uio-username>@login.uio.no
@@ -165,58 +171,29 @@ Host egil-cluster
     RemoteCommand ssh -t lab-login.uio.no ssh -t mn-fys-ccse-nat.lab.uio.no
 ```
 
-From `mn-fys-ccse-nat` reach a node with `ssh neuroai` (`griffith` only answers on `10.255.80.18`).
+From `mn-fys-ccse-nat`, reach the GPU node with `ssh hugefacet`.
 
-## A.2 Step 0 — the diagnostics, before installing anything
+## A.2 Checking a node before you use it
 
-The site docs do not state the NVIDIA driver version, whether `neuroai` is managed by SLURM, its core
-count, or the partition's time limit. Guessing any of them wastes a day, and the driver version decides
-which `torch` wheel can be installed at all. Run this on **`neuroai` itself** and keep the output:
+Run on the node you intend to use. The driver version is what decides whether the pinned `torch` can
+load at all, and without a scheduler the second check is the only thing standing between you and
+someone else's job:
 
 ```bash
 ssh egil-cluster
-ssh neuroai
+ssh hugefacet
 
-hostname; whoami
-ls ~ > /dev/null && echo "HOME readable"; df -h ~ | tail -1      # is the NFS home here?
-mount | grep -i nfs | head -3
-nproc; free -g | head -2; ldd --version | head -1                # cores, RAM, glibc
-cat /etc/os-release | head -2
-
-nvidia-smi --query-gpu=name,driver_version,compute_cap,memory.total --format=csv
-nvidia-smi                                                        # is anyone else on the card?
-
-python3 -V; python3 -c "import ssl; print(ssl.OPENSSL_VERSION)"
-python3 -m venv --help > /dev/null 2>&1 && echo "venv ok" || echo "NO ensurepip"
-env | grep -i proxy
-curl -sI https://pypi.org/simple/ | head -1                       # redsocks working?
-curl -sI https://download.pytorch.org/whl/cu126/ | head -1
-command -v tmux screen uv git
+nvidia-smi --query-gpu=index,name,driver_version,compute_cap,memory.total --format=csv
+nvidia-smi                                 # IS ANYONE ELSE ON THE CARDS?
+nproc; free -g | head -2; df -h ~ | tail -1
 ```
-
-And on the gateway, for the scheduler:
-
-```bash
-sinfo -s
-sinfo -N -o "%N %P %t %C %m %G"
-scontrol show node neuroai
-scontrol show partition
-scontrol show config | grep -i -E "MaxTime|DefaultTime|GresTypes|AccountingStorageType"
-squeue -o "%.8i %.9P %.20j %.8u %.2t %.10M %R %b"
-```
-
-How to read the answers:
 
 | observation | consequence |
 |---|---|
-| `driver_version >= 525.60.13` | `requirements-cuda.txt` works as written. See A.6 otherwise |
-| `compute_cap` is `8.6` | RTX 3090, Ampere — `bf16-mixed` is supported |
-| `scontrol show node neuroai` says *not found* | `neuroai` is outside SLURM — use **A.10**, not A.8/A.9 |
-| `%G` shows no `gpu:` for the node | SLURM does not know about its GPU; `--gres=gpu:1` will not work |
-| `AccountingStorageType=.../none` | no `--account` is needed (the script has none) |
-| `MaxTime` below `23:30:00` | lower `--time` and chain jobs (A.9) |
-| `curl` to pypi.org does not return `200` | fix the proxy before A.5, nothing will install |
-| `nproc` far below 8 | lower `--cpus-per-task` in `scripts/train.sbatch` |
+| `driver_version >= 525.60.13` | `requirements-cuda.txt` works as written |
+| `compute_cap` `8.0` (A100) or `8.6` (3090) | `bf16-mixed` is supported |
+| `compute_cap` `6.0` (`bigfacet`, P100) | no bf16 — add `trainer.precision=32` |
+| another user's process in `nvidia-smi` | pick different GPUs with `EDITFLOW_GPUS=`, or another node |
 
 ## A.3 Where everything lives
 
@@ -225,11 +202,11 @@ How to read the answers:
 ~/edit-flows/data/synthetic/      the generated sequence pool and its .npz cache (gitignored)
 ~/edit-flows/runs/<name>/         everything a run writes
 ~/0envs/EditFlows_env/            the virtual environment, deliberately OUTSIDE the clone
-~/0envs/bootstrap/                a throwaway env that only holds uv
 ```
 
-One clone, one environment, on the shared NFS home — every node sees them. The environment is outside
-the clone so `git pull`, `git switch` and `git clean` can never touch it.
+One clone and one environment on the shared NFS home — every node sees them, and there is nothing to
+install per node. The environment is outside the clone so `git pull`, `git switch` and `git clean` can
+never touch it.
 
 ## A.4 The clone, and a key for pushing back
 
@@ -242,12 +219,12 @@ cd ~/edit-flows
 git switch on-GPU-cluster-branch
 ```
 
-Pushing results back (A.11) does need credentials. Generate a key **on the cluster** and add the public
-half to your GitHub account under *Settings -> SSH and GPG keys*:
+Pushing results back (A.10) does need credentials. Generate a key **on the cluster** and add the public
+half to GitHub under *Settings -> SSH and GPG keys*:
 
 ```bash
 ssh-keygen -t ed25519 -C "egil-cluster" -f ~/.ssh/id_ed25519 -N ""
-cat ~/.ssh/id_ed25519.pub            # paste this into GitHub
+cat ~/.ssh/id_ed25519.pub            # paste into GitHub
 git remote set-url --push origin git@github.com:Ltwicke/edit-flows.git
 ssh -T git@github.com                # expect "Hi <user>! You've successfully authenticated"
 ```
@@ -262,43 +239,109 @@ Host github.com
     User git
 ```
 
-## A.5 Python 3.13 and the environment
+## A.5 Getting through the proxy
+
+**This is the step that fails first on this cluster.** A `pip install` typically dies with
+
+```
+ProxyError('Cannot connect to proxy.', OSError('Tunnel connection failed: 403 Forbidden'))
+ERROR: No matching distribution found for uv
+```
+
+That error means pip found an **explicit** proxy — from `https_proxy` in the environment or from a
+`pip.conf` — and that proxy refused the `CONNECT` to PyPI. It is not redsocks: redsocks works
+transparently at the packet level and needs no environment variables at all. Setting them routes pip
+through a different, restrictive proxy instead.
+
+Work through this in order and stop at the first that returns `200`:
+
+```bash
+# 1. What is actually configured?
+env | grep -i proxy
+cat /etc/environment 2>/dev/null | grep -i proxy
+cat /etc/pip.conf ~/.pip/pip.conf ~/.config/pip/pip.conf 2>/dev/null
+
+# 2. Which hosts are reachable, with the proxy as configured?
+for u in https://github.com https://pypi.org/simple/ https://files.pythonhosted.org \
+         https://download.pytorch.org/whl/cu126/; do
+  printf '%-45s %s\n' "$u" "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$u" 2>&1)"
+done
+
+# 3. The same, with every proxy variable removed - this is usually the fix
+env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY bash -c '
+for u in https://pypi.org/simple/ https://files.pythonhosted.org \
+         https://download.pytorch.org/whl/cu126/; do
+  printf "%-45s %s\n" "$u" "$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 "$u" 2>&1)"
+done'
+```
+
+If step 3 gives `200`, unset the variables for the whole session and continue with A.6:
+
+```bash
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
+# make it stick:
+printf '\nunset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY\n' >> ~/.bashrc
+```
+
+`git clone` over HTTPS working while pip fails is the giveaway: git and pip read proxy settings from
+different places, so one can be routed through the broken proxy while the other is not.
+
+**If PyPI is unreachable either way**, pip needs `pypi.org` *and* `files.pythonhosted.org`, and torch
+additionally needs `download.pytorch.org`. Ask the CCSE admins (Henrik Andersen Sveinsson,
+h.a.sveinsson@fys.uio.no) to allow those three, or for the address of a local mirror — a cluster whose
+users cannot install Python packages is broken, and the site docs do claim https works. Two things make
+that wait less painful:
+
+* `uv` itself, and the standalone CPython it installs, come from **GitHub releases**, not PyPI. If
+  github.com is reachable, A.6 works even while PyPI is blocked — you just cannot install the
+  dependencies yet.
+* As a genuine last resort the wheels can be carried in by hand. Note that git is **not** a usable
+  channel: the torch wheel alone is far over GitHub's 100 MB per-file limit. GitHub *Releases* allow
+  2 GB per asset, so build the set on any Linux machine with
+  `pip download -r requirements-cuda.txt -d wheels --only-binary=:all: --platform manylinux_2_28_x86_64 --python-version 3.13`,
+  attach `wheels/` to a release on your own repo, then on the cluster `curl -LO` each and
+  `pip install --no-index --find-links wheels -r requirements-cuda.txt`. It is roughly 4 GB.
+
+## A.6 Python 3.13 and the environment
 
 The project needs Python >= 3.13; the nodes have 3.8.10 and there is no module system. Use **uv**: it
 downloads a prebuilt standalone CPython, so nothing is compiled and no system headers are needed.
-Install uv from PyPI rather than with `curl | sh`, because PyPI is known to work through the proxy
-while `astral.sh` may not be reachable.
 
 ```bash
 python3 -m venv ~/0envs/bootstrap
 ~/0envs/bootstrap/bin/pip install -U pip uv
 export PATH="$HOME/0envs/bootstrap/bin:$PATH"          # add to ~/.bashrc to keep it
 uv --version
+```
 
-uv python install 3.13
+If PyPI is blocked but github.com is not (A.5), take uv straight from its GitHub release instead:
+
+```bash
+cd ~ && curl -LO https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz
+tar xzf uv-x86_64-unknown-linux-gnu.tar.gz
+mkdir -p ~/bin && mv uv-x86_64-unknown-linux-gnu/uv ~/bin/ && export PATH="$HOME/bin:$PATH"
+```
+
+Then, either way:
+
+```bash
+uv python install 3.13                                 # prebuilt, from GitHub; nothing is compiled
 uv venv --python 3.13 ~/0envs/EditFlows_env
 ~/0envs/EditFlows_env/bin/python -V                    # expect Python 3.13.x
 ~/0envs/EditFlows_env/bin/python -c "import ssl; print(ssl.OPENSSL_VERSION)"
 ```
 
-Fallbacks, in order, if that fails:
+Fallbacks if uv cannot be made to work at all: **Miniforge** (also compiles nothing, installer from
+GitHub releases), and only then `pyenv`, which the site docs recommend but which builds CPython from
+source and needs `libssl-dev libffi-dev zlib1g-dev libbz2-dev libsqlite3-dev libreadline-dev
+liblzma-dev` — unavailable without root, and a build missing `_ssl` yields a Python that cannot reach
+PyPI at all, discovered only after a long compile. Verify any such build with
+`python -c "import ssl, lzma, sqlite3, ctypes"`.
 
-1. `python3 -m pip install --user uv` — if `python3 -m venv` has no `ensurepip`. Acceptable for a
-   standalone tool binary; it does not leak into the project environment.
-2. `curl -LsSf https://astral.sh/uv/install.sh | sh` — only if PyPI is unreachable but `astral.sh` is.
-3. **Miniforge**, which also compiles nothing:
-   `bash Miniforge3-Linux-x86_64.sh -b -p ~/miniforge3` then
-   `~/miniforge3/bin/conda create -y -p ~/0envs/EditFlows_env python=3.13`.
-4. `pyenv`, which the site docs recommend, **last**: it compiles CPython from source and needs
-   `libssl-dev libffi-dev zlib1g-dev libbz2-dev libsqlite3-dev libreadline-dev liblzma-dev`, which you
-   cannot install without root. A build with a missing `_ssl` produces a Python that cannot reach PyPI
-   at all — and you only find out after a long compile. Verify immediately with
-   `python -c "import ssl, lzma, sqlite3, ctypes"`.
+If 3.13 proves impossible, the real floor across the pinned dependencies is **3.11** (`jaxtyping`); a
+3.11 or 3.12 interpreter works at the cost of one line in `pyproject.toml`.
 
-If 3.13 cannot be had at all, note that the real floor across the pinned dependencies is **3.11**
-(`jaxtyping`); a 3.11 or 3.12 interpreter works at the cost of one line in `pyproject.toml`.
-
-## A.6 torch, and why `nvcc` does not matter
+## A.7 torch, and why `nvcc` does not matter
 
 The site docs report `nvcc 10.1.243`. **Ignore it.** The pip wheels bundle their own CUDA runtime as
 `nvidia-*-cu12` packages and never use a system CUDA toolkit. Only the **driver** matters, because CUDA
@@ -312,24 +355,24 @@ uv pip install --python ~/0envs/EditFlows_env -r requirements-cuda.txt
 | `driver_version` from A.2 | what to do |
 |---|---|
 | >= 525.60.13 | the command above is correct (`torch==2.13.0+cu126`) |
-| 455 – 525 | CUDA 12 wheels will not load, and torch 2.13 ships no cu118 build. Pin back to the newest torch that has both a cu118 and a cp313 wheel — the other pins only require `torch>=2.4`, so nothing else moves. Test it on the laptop first |
-| < 455 | an RTX 3090 cannot work; ask the CCSE admins (Henrik Andersen Sveinsson) |
+| 455 - 525 | CUDA 12 wheels will not load, and torch 2.13 ships no cu118 build. Pin back to the newest torch with both a cu118 and a cp313 wheel; the other pins only require `torch>=2.4`, so nothing else moves. Test on the laptop first |
+| < 455 | too old for an Ampere card — this is what rules `neuroai` out. An administrator's problem |
 
-Then verify, in this order — the bf16 matmul is the real gate, because `bf16-mixed` is the precision
-both GPU experiments use:
+Verify in this order; the bf16 matmul is the real gate, because `bf16-mixed` is the precision both GPU
+experiments use:
 
 ```bash
 P=~/0envs/EditFlows_env/bin/python
 $P -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
-$P -c "import torch; print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0), torch.cuda.is_bf16_supported())"
-$P -c "import torch; a=torch.randn(4096,4096,device='cuda',dtype=torch.bfloat16); print((a@a).float().sum().item())"
+$P -c "import torch; print(torch.cuda.device_count(), torch.cuda.get_device_name(0), torch.cuda.is_bf16_supported())"
+$P -c "import torch; a=torch.randn(8192,8192,device='cuda',dtype=torch.bfloat16); print((a@a).float().sum().item())"
 $P -m pytest -q tests -m "not slow"          # expect 51 passed
 ```
 
-## A.7 The sequence pool
+## A.8 The sequence pool
 
 Generate it on the cluster — `scp` is not available, and the generator is seeded, so the same command
-produces the same sequences on your laptop:
+reproduces the same sequences on your laptop:
 
 ```bash
 cd ~/edit-flows
@@ -342,92 +385,57 @@ About 18 MB and a few minutes. Both GPU experiments point at this path. The trai
 54 000 sequences, so a 25 000-sequence epoch draws a different ~46% of the pool each time. The first
 run parses the file once and caches it as a `.npz` beside it.
 
-## A.8 The short job: does any of this work?
+## A.9 Running
+
+There is no scheduler, so runs start directly on the node and detach. `scripts/train_detached.sh`
+checks the GPUs are free, sets `CUDA_VISIBLE_DEVICES`, derives the worker count, and starts the run
+under `setsid nohup` so it survives logout.
+
+**The short run first** — two epochs of 512 sequences on one GPU, a couple of minutes. It is not a
+training result; it proves the environment, the GPU, bf16, the metrics and the run directory:
 
 ```bash
+ssh egil-cluster && ssh hugefacet
 cd ~/edit-flows
-mkdir -p runs                                   # ONCE: --output is resolved at submit time
-EDITFLOW_EXPERIMENT=deletion-3090-check sbatch scripts/train.sbatch gpu-check
-squeue -u $USER
-tail -f runs/slurm-editflow-deletion-*.out
+EDITFLOW_EXPERIMENT=deletion-gpu-check EDITFLOW_GPUS=0 scripts/train_detached.sh gpu-check
+tail -f runs/gpu-check/train.log
+grep "val epoch" runs/gpu-check/train.log      # two epochs with precision and recall
 ```
 
-Two epochs of 512 sequences with the full-size encoder and `bf16-mixed` — a couple of minutes. It is
-not a training result; it proves the environment, the GPU, bf16, the metrics and the run directory.
-
-Success looks like `runs/gpu-check/eval/deletion_metrics.csv` existing with two epochs:
+**Then the long run.** Read the real epoch time off the short run first and choose `max_epochs`
+(section 3.7 of `notebooks/on-node-training-analysis.ipynb` does the arithmetic):
 
 ```bash
-column -s, -t < runs/gpu-check/eval/deletion_metrics.csv | grep -E "stage|all"
-grep "val epoch" runs/gpu-check/train.log
+scripts/train_detached.sh long-01                        # every free GPU on the node
+scripts/train_detached.sh long-01 trainer.max_epochs=8   # the same setup, roughly 30 minutes
+EDITFLOW_GPUS=0 scripts/train_detached.sh long-01        # a single GPU
 ```
 
-## A.9 The long job
+Start on **one** GPU and let the measurement decide whether more help. Training scales with the GPU
+count, but the per-epoch sampling evaluation is `sample_steps` *sequential* forward passes and barely
+does, so four GPUs can simply mean the evaluation dominates. One A100 is a great deal of machine for a
+5M-parameter model.
 
-First read the real epoch time off the short run and pick `max_epochs` (section 3.7 of
-`notebooks/on-node-training-analysis.ipynb` does this arithmetic for you):
+Useful while it runs:
 
 ```bash
-grep "val epoch" runs/gpu-check/train.log      # the timestamps give seconds per epoch
+tail -f runs/long-01/train.log                 # per-epoch deletion metrics
+tail -f runs/long-01.detached.out              # stdout/stderr, including a crash
+nvidia-smi
+kill $(cat runs/long-01.pid)                   # stop it
+scripts/train_detached.sh long-01              # continue from the newest checkpoint
 ```
 
-Then:
+Re-running the same run name **resumes** from the newest of `checkpoints/last.ckpt` and
+`periodic.ckpt`; `periodic.ckpt` is written every 30 minutes, so a crash or a killed session loses
+little. This is checkpoint-based, not scheduler-based, so it works exactly as it would under SLURM.
 
-```bash
-sbatch scripts/train.sbatch long-01                          # up to 24 h, max_epochs=300
-sbatch scripts/train.sbatch long-01 trainer.max_epochs=<N>   # a calibrated shorter run
-```
+Do not add `trainer.max_time` to get a shorter run: lightning restores the timer cumulatively and a
+resumed run would stop at once. Use `trainer.max_epochs=<N>`.
 
-For a roughly 30-minute run of the same setup, pass the `max_epochs` the calibration gives — do **not**
-add `trainer.max_time`, because lightning restores the timer cumulatively and a resumed run would stop
-at once.
+## A.10 Getting the numbers onto your laptop
 
-Submitting `long-01` again continues it from its newest checkpoint; `periodic.ckpt` is written every 30
-minutes, so a job killed by the time limit loses little:
-
-```bash
-sbatch scripts/train.sbatch long-01            # continue where it stopped
-scripts/submit_chain.sh 3 long-01              # three dependent jobs, one run
-```
-
-Any directive can be overridden on the command line, because `sbatch` options beat `#SBATCH` lines:
-
-```bash
-sbatch --partition=<other> -w hugefacet --gres=gpu:4 --ntasks-per-node=4 \
-       scripts/train.sbatch big-01             # 4 GPUs on another node, DDP
-scancel <jobid>
-```
-
-## A.10 If `neuroai` is not managed by SLURM
-
-The site docs name only `bigfacet`, `hugefacet` and `greatfacet` as the nodes long jobs go through
-SLURM on, and `neuroai` is not among them. If A.2 showed `scontrol show node neuroai` failing, run
-directly — and note that **there is then no admission control**: check the card is free first, because
-another user can take it and your job will run out of memory.
-
-```bash
-ssh egil-cluster && ssh neuroai
-cd ~/edit-flows && mkdir -p runs
-nvidia-smi                                     # is the GPU free?
-df -h ~ | tail -1                              # is the shared home healthy?
-
-tmux new -s editflow                           # if tmux exists: detach with Ctrl-b d
-~/0envs/EditFlows_env/bin/python train.py experiment=deletion-3090-24h name=long-01
-
-# without tmux - survives logout (new session, no controlling terminal, stdin closed):
-setsid nohup ~/0envs/EditFlows_env/bin/python train.py \
-    experiment=deletion-3090-24h name=long-01 \
-    > runs/long-01.nohup.out 2>&1 < /dev/null &
-echo "pid $!"
-```
-
-Monitor with `tail -f runs/long-01/train.log` and `nvidia-smi`. Resuming is unchanged: `resume_path()`
-is checkpoint-based, not SLURM-based, so re-running the same `name=` continues from the newest
-checkpoint.
-
-## A.11 Getting the numbers onto your laptop
-
-`scp` and `rsync` cannot reach this cluster, so the results travel by git. On the cluster:
+`scp` and `rsync` cannot reach this cluster, so results travel by git. On the cluster:
 
 ```bash
 cd ~/edit-flows
@@ -446,28 +454,29 @@ git fetch origin
 git restore --source origin/run-artifacts/long-01 -- runs/
 ```
 
-The files land in `runs/long-01/` and stay ignored locally, so they never pollute your working tree.
-Then open `notebooks/on-node-training-analysis.ipynb`, which needs no GPU and no checkpoints.
+The files land in `runs/long-01/` and stay ignored locally. Then open
+`notebooks/on-node-training-analysis.ipynb`, which needs no GPU and no checkpoints.
 
-## A.12 Jupyter on a node
+## A.11 Jupyter on a node
 
-JupyterHub is installed on `egil-analyze`, `neuroai` and `bioai`, on port 8000. Register the project
-environment as a kernel so notebooks can import `editflows`:
+JupyterHub is installed on `egil-analyze`, `neuroai` and `bioai` — note that `hugefacet` is **not** in
+that list, so the analysis kernel runs on a different node from the training. That is fine: the
+notebook needs neither a GPU nor the checkpoints, and `$HOME` is shared, so it can read the run
+directory from `egil-analyze`.
 
 ```bash
 mkdir -p ~/.local/share/jupyter/kernels
-~/0envs/EditFlows_env/bin/python -m pip install ipykernel      # already in the dev extra
 ~/0envs/EditFlows_env/bin/python -m ipykernel install --user \
     --name editflows_env --display-name "Python (EditFlows_env)"
 jupyter kernelspec list
 ```
 
-Both notebooks expect exactly that kernel name. Then reach it, in this order:
+Both notebooks expect exactly that kernel name. Then, in order:
 
-1. **Is it even listening?** On the node: `ss -ltnp | grep 8000`. The site docs never give a command to
+1. **Is it listening?** On the node: `ss -ltnp | grep 8000`. The site docs never give a command to
    start JupyterHub, so if nothing is listening, ask the admins — it is a system service.
 2. **On the CCSE wired network**, the site's own one-liner works:
-   `ssh -L 8000:localhost:8000 <user>@neuroai`, then open <http://localhost:8000>.
+   `ssh -L 8000:localhost:8000 <user>@egil-analyze`, then open <http://localhost:8000>.
 3. **From off site**, first find out whether forwarding is possible at all, since `lab-login` is
    documented as refusing it:
 
@@ -476,33 +485,25 @@ Both notebooks expect exactly that kernel name. Then reach it, in this order:
    ssh -p 18822 <user>@localhost                               # terminal 2
    ```
 
-   `channel 1: open failed: administratively prohibited` means forwarding is off and there is no tunnel
-   through that hop. If it does work, chain `-L` hop by hop — each one opened *inside* the previous
-   session, which is why the single `RemoteCommand` line cannot do it:
+   `channel 1: open failed: administratively prohibited` means forwarding is off and no tunnel is
+   possible through that hop. If it does work, chain `-L` hop by hop — each opened *inside* the
+   previous session, which is why the single `RemoteCommand` line cannot do it:
 
    ```bash
    ssh -L 8000:localhost:8000 <user>@login.uio.no
      ssh -L 8000:localhost:8000 <user>@lab-login.uio.no
        ssh -L 8000:localhost:8000 <user>@mn-fys-ccse-nat.lab.uio.no
-         ssh -L 8000:localhost:8000 neuroai
+         ssh -L 8000:localhost:8000 egil-analyze
    ```
 
-   `login.uio.no` is shared, so `bind: Address already in use` there means someone else holds the port.
-4. **The reliable path, and the recommended default: no tunnel.** Pull the artifact branch (A.11) and
-   run the notebook on your laptop. Nothing in it needs a GPU, a checkpoint or the cluster, which is
-   precisely why A.11 exists.
+4. **The reliable path, and the recommended default: no tunnel.** Pull the artifact branch (A.10) and
+   run the notebook on your laptop. Nothing in it needs a GPU, a checkpoint or the cluster — which is
+   exactly why A.10 exists.
 
-Note that the site also says JupyterHub is reachable only from the cabled CCSE network, so even a
-working tunnel may be refused from the VPN. And do not run an analysis kernel on `neuroai` while a long
-job owns the GPU.
-
-## A.13 Picking up changes from the laptop
-
-Development continues on your laptop. On the cluster:
+## A.12 Picking up changes from the laptop
 
 ```bash
-cd ~/edit-flows
-git pull
+cd ~/edit-flows && git pull
 ```
 
 That is all that is needed for code changes: `requirements-cuda.txt` installs the project with
@@ -513,19 +514,19 @@ uv pip install --python ~/0envs/EditFlows_env -r requirements-cuda.txt
 ~/0envs/EditFlows_env/bin/python -m pytest -q tests -m "not slow"
 ```
 
-## A.14 When something goes wrong
+## A.13 When something goes wrong
 
 | symptom | cause |
 |---|---|
-| `sbatch: error: ... Invalid account` | an `--account` crept back in; this site has no SLURM accounting |
-| `sbatch` fails writing the output file | `mkdir -p runs` in the clone first — `--output` is resolved at submit time |
-| `Batch job submission failed: Requested node configuration is not available` | `--gres=gpu:1` but SLURM does not know the node has a GPU, or `--nodelist` names a node outside the partition |
-| job stuck `PD` with `ReqNodeNotAvail` | `neuroai` is down or not in the partition; check `sinfo -N` |
+| `pip` fails with `Tunnel connection failed: 403 Forbidden` | an explicit proxy is configured; see A.5 |
+| `sbatch: command not found` | correct — this cluster has no scheduler. Use `scripts/train_detached.sh` |
+| `refusing to start; pick free GPUs` | another process holds the cards; `nvidia-smi`, then `EDITFLOW_GPUS=` or another node |
+| `run '<name>' is already running as pid N` | one run directory, two processes would corrupt it. `kill $(cat runs/<name>.pid)` or use a new name |
+| `CUDA error: no kernel image is available` | the wheel's CUDA build does not match the driver — back to A.7 |
+| `torch.cuda.is_available()` is `False` | on `neuroai`, expected: the driver is broken. Elsewhere, check `nvidia-smi` works at all |
 | `$'\r': command not found` | the script was checked out with CRLF; `.gitattributes` forces LF, so re-clone or `git config core.autocrlf input` |
-| `CUDA error: no kernel image is available` | the wheel's CUDA build does not match the driver — back to A.6 |
-| `torch.cuda.is_available()` is `False` inside a job but true on the node | the job got no GPU; check `--gres` reached SLURM (`scontrol show job <id>` -> `TresPerNode`) |
-| `ConfigCompositionException: Multiple values for experiment` | `experiment=` was passed as an argument; use `EDITFLOW_EXPERIMENT=` instead |
-| hydra `Could not override 'name'` / `name: ???` | every run needs `name=`; only `deletion-3090-check` defaults it |
-| `pip` cannot reach PyPI | the proxy, or a Python built without `_ssl` (see A.5) |
+| `ConfigCompositionException: Multiple values for experiment` | `experiment=` was passed as an argument; use `EDITFLOW_EXPERIMENT=` |
+| hydra `name: ???` is missing | every run needs a name; only `deletion-gpu-check` defaults it |
 | a run restarts from scratch unexpectedly | a different `name=`; the run name is the identity of the run |
-| disk full, every job on the cluster stops | the shared home; `du -h --max-depth=1 ~` and delete old checkpoints |
+| epochs are far smaller than 25 000 sequences | expected with several GPUs: `limit_train_batches` is per rank and the formula divides by `gpus` |
+| disk full, everyone's work stops | the shared home; `du -h --max-depth=1 ~` and delete old checkpoints |

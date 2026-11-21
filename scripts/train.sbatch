@@ -1,24 +1,25 @@
 #!/bin/bash
-# SLURM job template for training on a GPU node. Filled in for the UiO CCSE "Egil" cluster; see
-# docs/CLUSTER.md for the site-neutral version of every value below.
+# SLURM job template for training on a GPU node. Fill in the placeholders in <...> for your site.
 #
-#   mkdir -p runs                                        # ONCE: --output below is resolved at submit time
+# NOTE: the UiO CCSE cluster this fork is used on has NO scheduler installed - there is no sbatch,
+# squeue or sinfo there. Use scripts/train_detached.sh instead; see the appendix of docs/CLUSTER.md.
+# This template is kept for clusters that do run SLURM.
+#
+#   mkdir -p runs                                  # ONCE: --output is resolved at submit time
 #   sbatch scripts/train.sbatch <run name> [hydra overrides...]
 #
-#   EDITFLOW_EXPERIMENT=deletion-3090-check sbatch scripts/train.sbatch gpu-check    # the plumbing check
-#   sbatch scripts/train.sbatch long-01 trainer.max_epochs=8                         # ~30 minutes
-#   sbatch --partition=<other> -w hugefacet --gres=gpu:4 --ntasks-per-node=4 \
-#          scripts/train.sbatch big-01                                               # another node, 4 GPUs
+#   EDITFLOW_EXPERIMENT=deletion-gpu-check sbatch scripts/train.sbatch gpu-check
+#   sbatch scripts/train.sbatch long-01 trainer.max_epochs=8
+#   sbatch --gres=gpu:4 --ntasks-per-node=4 scripts/train.sbatch big-01     # 4 GPUs on one node, DDP
 #
 # sbatch command-line options override the #SBATCH directives below, so the node, partition, GPU count
-# and time limit are all changeable without editing this file.
+# and time limit are changeable without editing this file.
 #
-# The run resumes automatically from its newest checkpoint when the same run name is submitted again, so
-# a run that needs more than one job's time limit is simply resubmitted (see scripts/submit_chain.sh).
+# A run resumes automatically from its newest checkpoint when the same run name is submitted again, so a
+# run that needs more than one job's time limit is simply resubmitted (see scripts/submit_chain.sh).
 
 #SBATCH --job-name=editflow-deletion
-#SBATCH --partition=normal
-#SBATCH --nodelist=neuroai
+#SBATCH --partition=<gpu-partition>
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
@@ -26,24 +27,22 @@
 #SBATCH --time=0-23:30:00
 #SBATCH --output=runs/slurm-%x-%j.out
 
-# Notes on the directives above, for when this is moved to another site or node:
-#   --nodelist      remove it to let SLURM choose, or override with `sbatch -w <node>`. If `scontrol show
-#                   node neuroai` reports the node is unknown, neuroai is not managed by SLURM at all and
-#                   the detached path in docs/CLUSTER.md applies instead.
-#   --gres=gpu:N    this site's documented GPU syntax. Newer clusters also accept --gpus=N.
+# Notes on the directives above:
+#   --gres=gpu:N    the widely supported GPU syntax; newer clusters also accept --gpus=N. For N GPUs on
+#                   one node also set --ntasks-per-node=N (one process per GPU); gpus=N is passed below.
 #   --mem=32G       generous for the reference configuration; --mem-per-gpu is not available everywhere.
-#   --account       this site has no SLURM accounting, so there is no --account line. Add one where the
-#                   site requires it.
-# For N GPUs on one node: --gres=gpu:N --ntasks-per-node=N (one process per GPU); gpus=N is passed below.
+#   --account       add `#SBATCH --account=<project>` where the site uses SLURM accounting. A bogus
+#                   account makes every submission fail with `Invalid account`, so omit it otherwise.
+#   -w <node>       pass on the command line to pin a run to a particular node.
 
 set -euo pipefail
 
 RUN_NAME="${1:?usage: sbatch scripts/train.sbatch <run name> [overrides...]}"
 shift
 
-# The experiment comes from the environment, not from "$@": hydra rejects two values for the same key, so
-# a hard-coded experiment= plus a passthrough experiment= would be a composition error.
-EXPERIMENT="${EDITFLOW_EXPERIMENT:-deletion-3090-24h}"
+# The experiment comes from the environment, not from "$@": hydra rejects two values for the same key,
+# so a hard-coded experiment= plus a passthrough experiment= would be a composition error.
+EXPERIMENT="${EDITFLOW_EXPERIMENT:-deletion-gpu-24h}"
 VENV="${EDITFLOW_VENV:-$HOME/0envs/EditFlows_env}"
 PYTHON="$VENV/bin/python"
 

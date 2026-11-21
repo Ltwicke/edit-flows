@@ -85,6 +85,19 @@ uv pip install --python ~/0envs/EditFlows_env -r requirements-cuda.txt
 ~/0envs/EditFlows_env/bin/python -c "import ssl; print(ssl.OPENSSL_VERSION)"
 ```
 
+If `pip` dies with `Tunnel connection failed: 403 Forbidden`, an **explicit** proxy is configured
+(`https_proxy` in the environment, or a `pip.conf`) and is refusing the `CONNECT` to PyPI. A transparent
+redsocks proxy needs no such variables, so removing them is usually the fix:
+
+```bash
+env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY     curl -sS -o /dev/null -w '%{http_code}
+' https://pypi.org/simple/
+```
+
+pip needs both `pypi.org` and `files.pythonhosted.org`, and torch additionally `download.pytorch.org`.
+Note that `uv` and the standalone CPython it installs come from GitHub releases rather than PyPI, so the
+interpreter can often be built while PyPI is still blocked.
+
 Miniforge is an equivalent fallback (also no compilation). `pyenv` is the last resort: it builds CPython from source
 and needs `libssl-dev`, `libffi-dev`, `zlib1g-dev`, `libbz2-dev`, `libsqlite3-dev`, `libreadline-dev` and
 `liblzma-dev`, which cannot be installed without root - and a build with a missing `_ssl` yields a Python that
