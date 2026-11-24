@@ -1,0 +1,8 @@
+_target_: editflows.schedules.ExponentialKappaSchedule
+
+# The schedule of the training recipe (docs/TRAINING.md). A needed edit fires with the hazard c * exp(g t): low
+# while the sequence is still full of insertions, rising from 3 to 13.4 as they disappear.
+# kappa(t) = 1 - exp(-c (exp(g t) - 1) / g), so kappa(1) = 0.9991 and the path ends.
+rate: 3.0
+normalize: no
+growth: 1.5

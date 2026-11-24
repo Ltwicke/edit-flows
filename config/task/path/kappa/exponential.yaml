@@ -1,0 +1,9 @@
+_target_: editflows.schedules.ExponentialKappaSchedule
+
+# Hazard c of a needed edit: kappa(t) = (1 - exp(-c t)) / (1 - exp(-c)). Large c: constant hazard; c -> 0: the
+# linear schedule; c < 0: slow start like the cubic schedule.
+rate: 6.0
+# yes: kappa(1) = 1 exactly, the hazard rises at the very end (clamped). no: hazard exactly c, kappa(1) = 1 - exp(-c)
+normalize: yes
+# g > 0: the hazard rises as c * exp(g t) instead of staying at c, so early (noisy) times get more of the interval
+growth: 0.0

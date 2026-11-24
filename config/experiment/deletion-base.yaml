@@ -3,6 +3,12 @@
 # Reference configuration for GPU training on the full sequence file (~5M parameter encoder, bf16).
 #   python train.py experiment=deletion-base name=<run name> gpus=<number of GPUs>
 
+# The training recipe of docs/TRAINING.md: a rising-hazard schedule, a clip value above the usual gradient norm,
+# lr 3e-4. Upstream's settings remain selectable: task/path/kappa=cubic trainer.gradient_clip_val=1.0
+defaults:
+  - override /task/path/kappa: rising-hazard
+  - _self_
+
 experiment:
   name: deletion-base
 
@@ -19,17 +25,31 @@ task:
       hidden_size: 256
       num_hidden_layers: 6
       num_attention_heads: 8
+  coupling:
+    # Share of the source that is original, per sequence from U(min, max)
+    original_fraction: [0.5, 0.99]
   eval:
     n_sample_seqs: 512
     sample_steps: 100
+    # Buckets of the original fraction, matching the range above
+    fraction_bins: [0.5, 0.65, 0.8, 0.99]
   optimizer:
     lr: 3e-4
     betas: [0.9, 0.95]
+    # Not fused: under bf16-mixed, lightning refuses gradient clipping (trainer.gradient_clip_val) for an
+    # optimizer that unscales gradients itself, which a fused AdamW declares. The foreach update is the same.
+    fused: no
   lr_scheduler:
     warmup_steps: 1000
+    # The cosine ends at a third of the peak. In the long late phase of training a learning rate between 1e-4
+    # and 3e-4 makes no difference to the progress per sequence, 3e-5 slows it down (docs/TRAINING.md).
+    end_lr: ${eval:'${task.optimizer.lr} / 3'}
 
 trainer:
   precision: bf16-mixed
   devices: ${gpus}
+  # The loss is a sum over the tokens of a sequence, so the gradient norm is in the hundreds (median about 340 at
+  # batch 32). The clip value sits above that and only cuts the rare spikes; upstream's 1.0 would clip every step.
+  gradient_clip_val: 500
   max_epochs: 30
   log_every_n_steps: 50

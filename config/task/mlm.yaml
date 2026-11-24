@@ -1,0 +1,18 @@
+# Pretraining of the sequence encoder alone: masked-letter prediction on the targets. It uses the encoder node of
+# the deletion task's model, so `task=mlm` together with a deletion experiment pretrains exactly that encoder:
+#   python train.py task=mlm experiment=deletion-laptop name=<run> checkpoint.monitor=val/loss checkpoint.mode=min
+# The deletion task then starts from it with task.init.encoder_checkpoint=runs/<run>/checkpoints/last.ckpt
+defaults:
+  - model: encoder-head
+  - optimizer: adamw
+  - lr_scheduler: cosine
+  - _self_
+
+_target_: editflows.encoder_pretraining.MaskedLetterPretraining
+_recursive_: no
+_convert_: all
+
+vocab_size: ${data.vocab_size}
+
+# Share of the letters that are hidden and predicted
+mask_fraction: 0.15

@@ -21,3 +21,30 @@ eval:
   fraction_bins: [0.4, 0.55, 0.7, 0.9]
   # Seed of the couplings used for the sampling evaluation
   seed: 1234
+
+# Weight initialisation applied once to the freshly built model. Only values change, never the model's modules.
+init:
+  # Log-rates [insert, substitute, delete] the rate head starts from: its last layer gets the bias that produces
+  # them, so that training starts at chosen rates instead of e^0 = 1 for every operation. ~ keeps the default.
+  head_log_rates: ~
+  # ... and its weights are multiplied by this: 0 = every token starts at exactly these rates, 1 = default weights
+  head_weight_scale: 0.0
+  # Zero the last layer of the time embedding, so that time enters the head gradually
+  time_embedding_zero: no
+  # default | scaled: output projections of the encoder's residual branches smaller by 1 / sqrt(2 * layers)
+  trunk: default
+  # Start the encoder from a checkpoint, e.g. of the masked-letter pretraining (task=mlm)
+  encoder_checkpoint: ~
+  # Start the whole model from the weights of another run's checkpoint: a warm start with a fresh optimizer
+  # and learning-rate schedule (trainer.fit's ckpt_path / from_ckpt would restore both)
+  checkpoint: ~
+
+# Optimizer parameter groups. With these defaults the optimizer is the plain single-group one.
+optim:
+  # Weight decay only on weights with at least two dimensions (not on biases and norm gains)
+  decay_matrices_only: no
+  # Learning rate of the encoder relative to the rest of the model
+  encoder_lr_scale: 1.0
+  # The encoder's learning rate is 0 for the first steps, then ramps up linearly over the ramp
+  encoder_freeze_steps: 0
+  encoder_ramp_steps: 0
