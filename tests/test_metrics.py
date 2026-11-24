@@ -59,6 +59,8 @@ def test_ranking_precision_at_k():
     log_lambda_del = torch.tensor([9.0, 0.0, 5.0, 4.0, 0.0, 3.0, 0.0, 0.0])
     counts.update_ranking(log_lambda_del, x_0, torch.tensor([0]))
     assert counts.summary()["rank_p_at_k"] == 2 / 3
+    # A random ranking of the 7 non-BOS tokens hits 3 * 3 / 7 of the 3 insertions: the chance level is 3 / 7
+    assert abs(counts.summary()["rank_chance"] - 3 / 7) < 1e-3
 
 
 def test_write_metrics_replaces_resumed_epochs(tmp_path):

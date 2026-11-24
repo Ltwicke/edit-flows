@@ -8,6 +8,8 @@ Two measurements, both bucketed by target length and by the original fraction $n
   events.
 * ranking: at $t = 0$ rank the source tokens by their deletion rate; precision@k with k the number of inserted
   tokens. Threshold-free, so it works although the rates near $t = 0$ are small by construction of the path.
+  Its chance level is *not* the share of inserted tokens: a random ranking hits $k^2 / n$ of the $k$ insertions
+  among $n$ tokens, and sequences with many insertions weigh more, so `rank_chance` is counted alongside.
 """
 
 from __future__ import annotations
@@ -23,8 +25,10 @@ from torch import Tensor, distributed
 from editflows import DataBatch
 from editflows.coupling import CoupledBatch
 
-COUNTS = ("n_seq", "tp", "fp", "fn", "tn", "ins_events", "sub_events", "exact", "abs_len_err", "rank_hits", "rank_k")
-RANK_COLUMNS = (COUNTS.index("rank_hits"), COUNTS.index("rank_k"))
+# rank_random_milli: the hits a random ranking expects, k^2 / n per sequence, in thousandths (the counts are integers)
+COUNTS = ("n_seq", "tp", "fp", "fn", "tn", "ins_events", "sub_events", "exact", "abs_len_err", "rank_hits", "rank_k",
+          "rank_random_milli")
+RANK_COLUMNS = (COUNTS.index("rank_hits"), COUNTS.index("rank_k"), COUNTS.index("rank_random_milli"))
 
 
 class Buckets:
@@ -81,6 +85,7 @@ def rates(counts: Tensor) -> dict[str, float]:
         "del_f1": _div(2 * precision * recall, precision + recall),
         "del_chance": _div(c["tp"] + c["fn"], c["tp"] + c["fp"] + c["fn"] + c["tn"]),
         "rank_p_at_k": _div(c["rank_hits"], c["rank_k"]),
+        "rank_chance": _div(c["rank_random_milli"] / 1000, c["rank_k"]),
         "ins_per_seq": _div(c["ins_events"], c["n_seq"]),
         "sub_per_seq": _div(c["sub_events"], c["n_seq"]),
         "exact_match": _div(c["exact"], c["n_seq"]),
@@ -157,6 +162,7 @@ class DeletionCounts:
             hits = int(ins[torch.topk(s, k).indices].sum())
             self.counts[bucket_ids[i], RANK_COLUMNS[0]] += hits
             self.counts[bucket_ids[i], RANK_COLUMNS[1]] += k
+            self.counts[bucket_ids[i], RANK_COLUMNS[2]] += round(1000 * k * k / (len(s) - 1))  # BOS is not ranked
 
     def all_reduce(self):
         if distributed.is_available() and distributed.is_initialized():
